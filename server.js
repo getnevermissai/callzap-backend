@@ -25,8 +25,8 @@ app.post('/missed-call', async (req, res) => {
   try {
     await client.messages.create({
       body: `Hi! Sorry we missed your call. We will get back to you shortly. How can we help you today?`,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: callerNumber
+      from: 'whatsapp:' + process.env.TWILIO_PHONE_NUMBER,
+to: 'whatsapp:' + callerNumber
     });
     
     console.log(`Auto text sent to ${callerNumber}`);

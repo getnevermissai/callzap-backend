@@ -190,14 +190,37 @@ End with "BOOKING_COMPLETE" when appointment is confirmed.`
         conv.leadData.score = 75;
         conv.leadData.status = 'WARM';
       }
+// Generate conversation summary
+const summaryCompletion = await openai.chat.completions.create({
+  model: 'gpt-3.5-turbo',
+  messages: [
+    {
+      role: 'system',
+      content: 'Generate a short conversation summary. Return ONLY JSON: {"summary": "2-3 line summary", "nextAction": "what business should do next"}'
+    },
+    {
+      role: 'user',
+      content: `Conversation: ${JSON.stringify(conv.messages.slice(1))}, Lead data: ${JSON.stringify(conv.leadData)}`
+    }
+  ],
+  max_tokens: 150
+});
 
-      // Save to leads
-      leads.push({
-        ...conv.leadData,
-        timestamp: new Date().toISOString()
-      });
+try {
+  const summaryData = JSON.parse(summaryCompletion.choices[0].message.content);
+  conv.leadData.conversationSummary = summaryData.summary;
+  conv.leadData.nextAction = summaryData.nextAction;
+} catch(e) {
+  conv.leadData.conversationSummary = 'Customer contacted about service';
+}
 
-      console.log('New lead saved:', conv.leadData);
+// Save to leads
+leads.push({
+  ...conv.leadData,
+  timestamp: new Date().toISOString()
+});
+
+console.log('New lead saved:', conv.leadData);
     }
 
     // Send reply via Twilio

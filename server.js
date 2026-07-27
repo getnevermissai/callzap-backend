@@ -9,49 +9,76 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
-
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+// Store conversations and leads
 const conversations = {};
+const leads = [];
 
 app.get('/', (req, res) => {
   res.json({ status: 'CallZap AI Backend Running! ⚡' });
 });
 
+// Get all leads
+app.get('/leads', (req, res) => {
+  res.json(leads);
+});
+
 // Missed call webhook
 app.post('/missed-call', async (req, res) => {
   const callerNumber = req.body.From;
-  
+  const businessNumber = req.body.To;
+  const businessName = req.body.CalledCity || 'our business';
+
   console.log(`Missed call from ${callerNumber}`);
-  
+
+  // Get client Twilio credentials
+  const accountSid = req.body.AccountSid || process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const twilioClient = twilio(accountSid, authToken);
+
   try {
     await twilioClient.messages.create({
-      body: `Hi! Sorry we missed your call! 😊 We are here to help. How can we assist you today? You can also book an appointment directly here!`,
-      from: 'whatsapp:' + process.env.TWILIO_PHONE_NUMBER,
-      to: 'whatsapp:' + callerNumber
+      body: `Hi! 👋 Sorry we missed your call! I'm the AI assistant for ${businessName}. Can I help you today?`,
+      from: businessNumber,
+      to: callerNumber
     });
-    
-    conversations[callerNumber] = [
-      {
-        role: 'system',
-        content: `You are a friendly AI assistant for a local business using CallZap. 
-        Your job is to:
-        1. Help customers with their questions
-        2. Book appointments when requested
-        3. Collect reviews after appointments
-        4. Be helpful and professional
-        Keep responses short and friendly for WhatsApp messages.
-        If customer wants to book appointment, ask for their preferred date and time.
-        After booking, confirm the appointment details.`
+
+    // Initialize conversation with lead qualification prompt
+    conversations[callerNumber] = {
+      messages: [
+        {
+          role: 'system',
+          content: `You are CallZap AI assistant for ${businessName}.
+
+Your goal is to qualify leads and collect:
+1. Customer name
+2. Service they need
+3. Urgency (low/medium/high)
+4. Preferred appointment date and time
+
+Rules:
+- Never ask more than ONE question at a time
+- Keep messages SHORT (under 100 words)
+- Be friendly and professional
+- After collecting all info, confirm the booking
+- End with: "BOOKING_COMPLETE" when appointment is confirmed`
+        }
+      ],
+      leadData: {
+        phone: callerNumber,
+        business: businessNumber,
+        name: null,
+        service: null,
+        urgency: null,
+        appointment: null,
+        score: null,
+        status: 'NEW'
       }
-    ];
-    
+    };
+
     res.status(200).send('OK');
   } catch (error) {
     console.error('Error:', error);
@@ -59,74 +86,136 @@ app.post('/missed-call', async (req, res) => {
   }
 });
 
-// Handle incoming WhatsApp replies
+// Handle incoming SMS replies
 app.post('/incoming-sms', async (req, res) => {
-  const customerNumber = req.body.From.replace('whatsapp:', '');
+  const customerNumber = req.body.From;
   const customerMessage = req.body.Body;
-  
+  const businessNumber = req.body.To;
+
   console.log(`Message from ${customerNumber}: ${customerMessage}`);
-  
+
   try {
     if (!conversations[customerNumber]) {
-      conversations[customerNumber] = [
-        {
-          role: 'system',
-          content: `You are a friendly AI assistant for a local business using CallZap.
-          Help customers, answer questions, book appointments and collect reviews.
-          Keep responses short and friendly for WhatsApp.
-          After completing a booking, ask for a review.`
+      conversations[customerNumber] = {
+        messages: [
+          {
+            role: 'system',
+            content: `You are CallZap AI assistant. 
+Qualify leads by collecting: name, service needed, urgency, appointment date/time.
+Ask ONE question at a time. Keep messages short and friendly.
+End with "BOOKING_COMPLETE" when appointment is confirmed.`
+          }
+        ],
+        leadData: {
+          phone: customerNumber,
+          business: businessNumber,
+          name: null,
+          service: null,
+          urgency: null,
+          appointment: null,
+          score: null,
+          status: 'NEW'
         }
-      ];
+      };
     }
-    
-    conversations[customerNumber].push({
+
+    const conv = conversations[customerNumber];
+
+    conv.messages.push({
       role: 'user',
       content: customerMessage
     });
-    
+
+    // Get AI reply
     const completion = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
-      messages: conversations[customerNumber],
+      messages: conv.messages,
       max_tokens: 150
     });
-    
+
     const aiReply = completion.choices[0].message.content;
-    
-    conversations[customerNumber].push({
+
+    conv.messages.push({
       role: 'assistant',
       content: aiReply
     });
-    
-    await twilioClient.messages.create({
-      body: aiReply,
-      from: 'whatsapp:' + process.env.TWILIO_PHONE_NUMBER,
-      to: 'whatsapp:' + customerNumber
+
+    // Extract lead data using AI
+    const extractCompletion = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: 'Extract lead information from conversation. Return ONLY valid JSON with fields: name, service, urgency, appointment. Use null for missing fields.'
+        },
+        {
+          role: 'user',
+          content: `Conversation: ${JSON.stringify(conv.messages.slice(1))}`
+        }
+      ],
+      max_tokens: 200
     });
-    
-    console.log(`AI replied: ${aiReply}`);
+
+    try {
+      const extracted = JSON.parse(extractCompletion.choices[0].message.content);
+      conv.leadData = { ...conv.leadData, ...extracted };
+    } catch (e) {
+      console.log('Could not extract lead data yet');
+    }
+
+    // Check if booking is complete
+    if (aiReply.includes('BOOKING_COMPLETE')) {
+      // Get lead score
+      const scoreCompletion = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'system',
+            content: 'Rate this lead from 1-100. Return ONLY JSON: {"score": number, "status": "HOT/WARM/COLD", "summary": "one line summary"}'
+          },
+          {
+            role: 'user',
+            content: `Lead data: ${JSON.stringify(conv.leadData)}`
+          }
+        ],
+        max_tokens: 100
+      });
+
+      try {
+        const scoreData = JSON.parse(scoreCompletion.choices[0].message.content);
+        conv.leadData.score = scoreData.score;
+        conv.leadData.status = scoreData.status;
+        conv.leadData.summary = scoreData.summary;
+      } catch (e) {
+        conv.leadData.score = 75;
+        conv.leadData.status = 'WARM';
+      }
+
+      // Save to leads
+      leads.push({
+        ...conv.leadData,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log('New lead saved:', conv.leadData);
+    }
+
+    // Send reply via Twilio
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const twilioClient = twilio(accountSid, authToken);
+
+    await twilioClient.messages.create({
+      body: aiReply.replace('BOOKING_COMPLETE', '').trim(),
+      from: businessNumber,
+      to: customerNumber
+    });
+
     res.status(200).send('OK');
-    
+
   } catch (error) {
     console.error('Error:', error);
     res.status(500).send('Error');
-  }
-});
-
-// Request review after appointment
-app.post('/request-review', async (req, res) => {
-  const customerNumber = req.body.customerNumber;
-  const businessName = req.body.businessName;
-  
-  try {
-    await twilioClient.messages.create({
-      body: `Hi! Thank you for visiting ${businessName}! 😊 How was your experience? Please rate us 1-5 ⭐`,
-      from: 'whatsapp:' + process.env.TWILIO_PHONE_NUMBER,
-      to: 'whatsapp:' + customerNumber
-    });
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ success: false });
   }
 });
 

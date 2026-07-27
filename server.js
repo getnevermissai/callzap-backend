@@ -30,7 +30,9 @@ app.get('/leads', (req, res) => {
 app.post('/missed-call', async (req, res) => {
   const callerNumber = req.body.From;
   const businessNumber = req.body.To;
-  const businessName = req.body.CalledCity || 'our business';
+  const businessName = req.body.businessName || 'our business';
+const businessServices = req.body.services || 'our services';
+const businessHours = req.body.hours || '9 AM - 6 PM';
 
   console.log(`Missed call from ${callerNumber}`);
 
@@ -52,6 +54,8 @@ app.post('/missed-call', async (req, res) => {
         {
           role: 'system',
           content: `You are CallZap AI assistant for ${businessName}.
+          Business services: ${businessServices}
+Working hours: ${businessHours}
 
 Your goal is to qualify leads and collect:
 1. Customer name

@@ -1,4 +1,12 @@
 require('dotenv').config();
+const admin = require('firebase-admin');
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+const db = admin.firestore();
 const express = require('express');
 const twilio = require('twilio');
 const OpenAI = require('openai');
@@ -15,15 +23,32 @@ const openai = new OpenAI({
 
 // Store conversations and leads
 const conversations = {};
-const leads = [];
+
 
 app.get('/', (req, res) => {
   res.json({ status: 'CallZap AI Backend Running! ⚡' });
 });
 
 // Get all leads
-app.get('/leads', (req, res) => {
-  res.json(leads);
+app.get('/leads/:businessId', async (req, res) => {
+  try {
+    const businessId = req.params.businessId;
+    const snapshot = await db.collection('leads')
+      .doc(businessId)
+      .collection('customers')
+      .orderBy('timestamp', 'desc')
+      .get();
+    
+    const leads = [];
+    snapshot.forEach(doc => {
+      leads.push({ id: doc.id, ...doc.data() });
+    });
+    
+    res.json(leads);
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to fetch leads' });
+  }
 });
 
 // Missed call webhook
@@ -218,13 +243,16 @@ try {
   conv.leadData.conversationSummary = 'Customer contacted about service';
 }
 
-// Save to leads
-leads.push({
-  ...conv.leadData,
-  timestamp: new Date().toISOString()
-});
+// Save to Firebase
+await db.collection('leads')
+  .doc(conv.leadData.business || 'default')
+  .collection('customers')
+  .add({
+    ...conv.leadData,
+    timestamp: new Date().toISOString()
+  });
 
-console.log('New lead saved:', conv.leadData);
+console.log('Lead saved to Firebase!');
     }
 
     // Send reply via Twilio
@@ -245,7 +273,14 @@ console.log('New lead saved:', conv.leadData);
     res.status(500).send('Error');
   }
 });
-
+// Add Firebase service account to environment
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'CallZap AI Running! ⚡',
+    firebase: 'connected',
+    timestamp: new Date().toISOString()
+  });
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`CallZap AI backend running on port ${PORT}`);

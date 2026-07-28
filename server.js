@@ -312,6 +312,21 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+app.post('/api/business/config', async (req, res) => {
+  try {
+    const config = req.body;
+    const businessId = config.twilioPhone || 'default';
+    
+    await db.collection('businesses')
+      .doc(businessId)
+      .set(config, { merge: true });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ success: false });
+  }
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`CallZap AI backend running on port ${PORT}`);

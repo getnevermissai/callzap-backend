@@ -33,23 +33,31 @@ app.get('/', (req, res) => {
 app.get('/leads/:businessId', async (req, res) => {
   try {
     const businessId = req.params.businessId;
+    
+    // Basic auth check
+    const authToken = req.headers['x-business-token'];
+    if (!authToken || authToken !== businessId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
     const snapshot = await db.collection('leads')
       .doc(businessId)
       .collection('customers')
       .orderBy('timestamp', 'desc')
+      .limit(50)
       .get();
     
-    const leads = [];
-    snapshot.forEach(doc => {
-      leads.push({ id: doc.id, ...doc.data() });
-    });
+    const leads = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
     
     res.json(leads);
   } catch (error) {
     console.error('Error:', error);
     res.status(500).json({ error: 'Failed to fetch leads' });
   }
-});
+}); 
 
 // Missed call webhook
 app.post('/missed-call', async (req, res) => {
@@ -74,19 +82,41 @@ const businessHours = req.body.hours || '9 AM - 6 PM';
     });
 
     // Initialize conversation with lead qualification prompt
-    conversations[callerNumber] = {
-      messages: [
-        {
-          role: 'system',
-          content: `You are CallZap AI assistant for ${businessName}.
-          Business services: ${businessServices}
-Working hours: ${businessHours}
+    const existingCustomer = await db.collection('leads')
+  .doc(businessNumber)
+  .collection('customers')
+  .where('phone', '==', callerNumber)
+  .limit(1)
+  .get();
+
+let customerName = null;
+let isReturning = false;
+
+if (!existingCustomer.empty) {
+  const customerData = existingCustomer.docs[0].data();
+  customerName = customerData.name;
+  isReturning = true;
+}
+
+const greeting = isReturning && customerName
+  ? `Hi ${customerName}! Welcome back to ${businessName}! 😊 What service do you need today?`
+  : `Hi! 👋 Sorry we missed your call at ${businessName}! How can we help you today?`;
+
+await twilioClient.messages.create({
+  body: greeting,
+  from: businessNumber,
+  to: callerNumber
+});
+
+conversations[callerNumber] = {
+  messages: [
+    {
+      role: 'system',
+      content: `You are CallZap AI assistant for ${businessName}.
+${isReturning && customerName ? `Customer name is already known: ${customerName}. Skip asking their name and go directly to what service they need.` : ''}
 
 Your goal is to qualify leads and collect:
-1. Customer name
-2. Service they need
-3. Urgency (low/medium/high)
-4. Preferred appointment date and time
+${isReturning ? '1. Service they need\n2. Urgency\n3. Preferred appointment date and time' : '1. Customer name\n2. Service they need\n3. Urgency\n4. Preferred appointment date and time'}
 
 Rules:
 - Never ask more than ONE question at a time
@@ -94,19 +124,20 @@ Rules:
 - Be friendly and professional
 - After collecting all info, confirm the booking
 - End with: "BOOKING_COMPLETE" when appointment is confirmed`
-        }
-      ],
-      leadData: {
-        phone: callerNumber,
-        business: businessNumber,
-        name: null,
-        service: null,
-        urgency: null,
-        appointment: null,
-        score: null,
-        status: 'NEW'
-      }
-    };
+    }
+  ],
+  leadData: {
+    phone: callerNumber,
+    business: businessNumber,
+    name: customerName,
+    service: null,
+    urgency: null,
+    appointment: null,
+    score: null,
+    status: 'NEW',
+    isReturning: isReturning
+  }
+};
 
     res.status(200).send('OK');
   } catch (error) {

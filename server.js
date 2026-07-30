@@ -7,6 +7,15 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
+const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 const express = require('express');
 const twilio = require('twilio');
 const OpenAI = require('openai');
@@ -285,7 +294,26 @@ await db.collection('leads')
 
 console.log('Lead saved to Firebase!');
     }
-
+// Send HOT lead email notification
+if (conv.leadData.status === 'HOT') {
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: process.env.EMAIL_USER,
+    subject: `🔥 HOT LEAD — ${conv.leadData.name} wants ${conv.leadData.service}!`,
+    html: `
+      <h2>🔥 New HOT Lead!</h2>
+      <p><b>Customer:</b> ${conv.leadData.name}</p>
+      <p><b>Service:</b> ${conv.leadData.service}</p>
+      <p><b>Appointment:</b> ${conv.leadData.appointment}</p>
+      <p><b>Score:</b> ${conv.leadData.score}/100</p>
+      <p><b>Summary:</b> ${conv.leadData.conversationSummary}</p>
+      <p><b>Action:</b> ${conv.leadData.nextAction}</p>
+      <br>
+      <a href="https://www.callzap.co/dashboard.html">View Dashboard →</a>
+    `
+  });
+  console.log('HOT lead email sent!');
+}
     // Send reply via Twilio
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;

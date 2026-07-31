@@ -332,6 +332,49 @@ if (conv.leadData.status === 'HOT') {
     res.status(500).send('Error');
   }
 });
+app.post('/buy-number', async (req, res) => {
+  const { areaCode, country, businessName, userId } = req.body;
+
+  try {
+    let formattedAreaCode = areaCode;
+    if ((country === 'GB' || country === 'AU') && formattedAreaCode.startsWith('0')) {
+      formattedAreaCode = formattedAreaCode.substring(1);
+    }
+
+    const availableNumbers = await twilioClient
+      .availablePhoneNumbers(country)
+      .local
+      .list({ areaCode: formattedAreaCode, limit: 1 });
+
+    if (availableNumbers.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'No numbers found in this area code. Try another!' 
+      });
+    }
+
+    const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
+      phoneNumber: availableNumbers[0].phoneNumber,
+      friendlyName: `${businessName} - CallZap`,
+      smsUrl: 'https://callzap-backend.onrender.com/incoming-sms',
+      voiceUrl: 'https://callzap-backend.onrender.com/missed-call'
+    });
+
+    await db.collection('businesses').doc(userId).update({
+      twilioPhone: purchasedNumber.phoneNumber,
+      country: country
+    });
+
+    res.json({ 
+      success: true, 
+      phoneNumber: purchasedNumber.phoneNumber 
+    });
+
+  } catch (error) {
+    console.error('Twilio Buy Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 // Add Firebase service account to environment
 app.get('/health', (req, res) => {
   res.json({ 

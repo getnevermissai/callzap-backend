@@ -104,7 +104,17 @@ app.post('/api/business/config', async (req, res) => {
     res.status(500).json({ success: false });
   }
 });
-
+app.get('/test-twilio', async (req, res) => {
+  try {
+    const numbers = await twilioClient
+      .availablePhoneNumbers('US')
+      .local
+      .list({ areaCode: '512', limit: 1 });
+    res.json({ success: true, count: numbers.length, numbers: numbers });
+  } catch (error) {
+    res.json({ success: false, error: error.message, code: error.code });
+  }
+});
 app.get('/health', (req, res) => {
   res.json({
     status: 'CallZap AI Running! ⚡',

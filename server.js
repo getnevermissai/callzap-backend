@@ -72,8 +72,10 @@ app.post('/buy-number', async (req, res) => {
 
     res.json({ success: true, phoneNumber: purchasedNumber.phoneNumber });
   } catch (error) {
-    console.error('Twilio Buy Error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Twilio Buy Error Full:', JSON.stringify(error));
+console.error('Error message:', error.message);
+console.error('Error code:', error.code);
+res.status(500).json({ success: false, error: error.message, code: error.code });
   }
 });
 

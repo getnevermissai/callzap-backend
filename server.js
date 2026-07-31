@@ -7,6 +7,10 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
@@ -81,7 +85,7 @@ const businessHours = req.body.hours || '9 AM - 6 PM';
   // Get client Twilio credentials
   const accountSid = req.body.AccountSid || process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const twilioClient = twilio(accountSid, authToken);
+  
 
   try {
     await twilioClient.messages.create({
@@ -315,9 +319,6 @@ if (conv.leadData.status === 'HOT') {
   console.log('HOT lead email sent!');
 }
     // Send reply via Twilio
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const twilioClient = twilio(accountSid, authToken);
 
     await twilioClient.messages.create({
       body: aiReply.replace('BOOKING_COMPLETE', '').trim(),

@@ -44,17 +44,34 @@ app.get('/', (req, res) => {
 app.post('/buy-number', async (req, res) => {
   const { areaCode, country, businessName, userId } = req.body;
   try {
-    let formattedAreaCode = areaCode;
-    if ((country === 'GB' || country === 'AU') && formattedAreaCode.startsWith('0')) {
-      formattedAreaCode = formattedAreaCode.substring(1);
+    let searchParams = { limit: 1, smsEnabled: true, voiceEnabled: true };
+    
+    // Area code only works for US and Canada
+    if (country === 'US' || country === 'CA') {
+      searchParams.areaCode = areaCode;
+    } else {
+      // For UK and AU use contains pattern instead
+      searchParams.contains = areaCode;
     }
-    const availableNumbers = await twilioClient
+
+    let availableNumbers = await twilioClient
       .availablePhoneNumbers(country)
       .local
-      .list({ areaCode: formattedAreaCode, limit: 1 });
+      .list(searchParams);
+
+    // If no numbers found with area code, try without
+    if (availableNumbers.length === 0) {
+      availableNumbers = await twilioClient
+        .availablePhoneNumbers(country)
+        .local
+        .list({ limit: 1, smsEnabled: true, voiceEnabled: true });
+    }
 
     if (availableNumbers.length === 0) {
-      return res.status(404).json({ success: false, error: 'No numbers found in this area code.' });
+      return res.status(404).json({ 
+        success: false, 
+        error: 'No numbers available. Please try again.' 
+      });
     }
 
     const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
@@ -63,6 +80,20 @@ app.post('/buy-number', async (req, res) => {
       smsUrl: 'https://callzap-backend.onrender.com/incoming-sms',
       voiceUrl: 'https://callzap-backend.onrender.com/missed-call'
     });
+
+    await db.collection('businesses').doc(userId || 'default').set({
+      twilioPhone: purchasedNumber.phoneNumber,
+      country: country,
+      businessName: businessName
+    }, { merge: true });
+
+    res.json({ success: true, phoneNumber: purchasedNumber.phoneNumber });
+
+  } catch (error) {
+    console.error('Twilio Buy Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
     await db.collection('businesses').doc(userId || 'default').set({
       twilioPhone: purchasedNumber.phoneNumber,

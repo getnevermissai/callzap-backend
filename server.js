@@ -44,23 +44,14 @@ app.get('/', (req, res) => {
 app.post('/buy-number', async (req, res) => {
   const { areaCode, country, businessName, userId } = req.body;
   try {
-    let searchParams = { limit: 1, smsEnabled: true, voiceEnabled: true };
-    
-    // Area code only works for US and Canada
+    let availableNumbers = [];
+
     if (country === 'US' || country === 'CA') {
-      searchParams.areaCode = areaCode;
+      availableNumbers = await twilioClient
+        .availablePhoneNumbers(country)
+        .local
+        .list({ areaCode: areaCode, limit: 1, smsEnabled: true, voiceEnabled: true });
     } else {
-      // For UK and AU use contains pattern instead
-      searchParams.contains = areaCode;
-    }
-
-    let availableNumbers = await twilioClient
-      .availablePhoneNumbers(country)
-      .local
-      .list(searchParams);
-
-    // If no numbers found with area code, try without
-    if (availableNumbers.length === 0) {
       availableNumbers = await twilioClient
         .availablePhoneNumbers(country)
         .local
@@ -68,9 +59,16 @@ app.post('/buy-number', async (req, res) => {
     }
 
     if (availableNumbers.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'No numbers available. Please try again.' 
+      availableNumbers = await twilioClient
+        .availablePhoneNumbers(country)
+        .local
+        .list({ limit: 1 });
+    }
+
+    if (availableNumbers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No numbers available. Please try again.'
       });
     }
 
@@ -92,21 +90,6 @@ app.post('/buy-number', async (req, res) => {
   } catch (error) {
     console.error('Twilio Buy Error:', error.message);
     res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-    await db.collection('businesses').doc(userId || 'default').set({
-      twilioPhone: purchasedNumber.phoneNumber,
-      country: country,
-      businessName: businessName
-    }, { merge: true });
-
-    res.json({ success: true, phoneNumber: purchasedNumber.phoneNumber });
-  } catch (error) {
-    console.error('Twilio Buy Error Full:', JSON.stringify(error));
-console.error('Error message:', error.message);
-console.error('Error code:', error.code);
-res.status(500).json({ success: false, error: error.message, code: error.code });
   }
 });
 
@@ -266,43 +249,41 @@ app.post('/incoming-sms', async (req, res) => {
     const aiReply = completion.choices[0].message.content;
     conv.messages.push({ role: 'assistant', content: aiReply });
 
-    const extractCompletion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        {
-          role: 'system',
-          content: 'Extract lead info. Return ONLY JSON: {"name": "", "service": "", "urgency": "", "appointment": ""}'
-        },
-        {
-          role: 'user',
-          content: `Conversation: ${JSON.stringify(conv.messages.slice(1))}`
-        }
-      ],
-      max_tokens: 200
-    });
-
     try {
+      const extractCompletion = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'system',
+            content: 'Extract lead info. Return ONLY JSON: {"name": "", "service": "", "urgency": "", "appointment": ""}'
+          },
+          {
+            role: 'user',
+            content: `Conversation: ${JSON.stringify(conv.messages.slice(1))}`
+          }
+        ],
+        max_tokens: 200
+      });
       const extracted = JSON.parse(extractCompletion.choices[0].message.content);
       conv.leadData = { ...conv.leadData, ...extracted };
     } catch(e) {}
 
     if (aiReply.includes('BOOKING_COMPLETE')) {
-      const scoreCompletion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: 'Rate lead 1-100. Return ONLY JSON: {"score": number, "status": "HOT/WARM/COLD", "summary": "one line", "nextAction": "what to do"}'
-          },
-          {
-            role: 'user',
-            content: `Lead: ${JSON.stringify(conv.leadData)}`
-          }
-        ],
-        max_tokens: 150
-      });
-
       try {
+        const scoreCompletion = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            {
+              role: 'system',
+              content: 'Rate lead 1-100. Return ONLY JSON: {"score": number, "status": "HOT/WARM/COLD", "summary": "one line", "nextAction": "what to do"}'
+            },
+            {
+              role: 'user',
+              content: `Lead: ${JSON.stringify(conv.leadData)}`
+            }
+          ],
+          max_tokens: 150
+        });
         const scoreData = JSON.parse(scoreCompletion.choices[0].message.content);
         conv.leadData.score = scoreData.score;
         conv.leadData.status = scoreData.status;

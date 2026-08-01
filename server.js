@@ -76,7 +76,8 @@ app.post('/buy-number', async (req, res) => {
       phoneNumber: availableNumbers[0].phoneNumber,
       friendlyName: `${businessName} - CallZap`,
       smsUrl: 'https://callzap-backend.onrender.com/incoming-sms',
-      voiceUrl: 'https://callzap-backend.onrender.com/missed-call'
+      voiceUrl: 'https://callzap-backend.onrender.com/missed-call',
+      addressSid: country === 'US' ? '' : 'ADced8d8b20f982fab1572a0e2367fe411'
     });
 
     await db.collection('businesses').doc(userId || 'default').set({

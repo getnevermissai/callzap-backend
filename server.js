@@ -55,7 +55,7 @@ app.post('/buy-number', async (req, res) => {
       availableNumbers = await twilioClient
         .availablePhoneNumbers(country)
         .mobile
-        .list({ limit: 1, smsEnabled: true, voiceEnabled: true });
+        .list({ limit: 1 });
     }
 
     if (availableNumbers.length === 0) {

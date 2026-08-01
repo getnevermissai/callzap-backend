@@ -54,14 +54,14 @@ app.post('/buy-number', async (req, res) => {
     } else {
       availableNumbers = await twilioClient
         .availablePhoneNumbers(country)
-        .local
+        .mobile
         .list({ limit: 1, smsEnabled: true, voiceEnabled: true });
     }
 
     if (availableNumbers.length === 0) {
       availableNumbers = await twilioClient
         .availablePhoneNumbers(country)
-        .local
+        .mobile
         .list({ limit: 1 });
     }
 

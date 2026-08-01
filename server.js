@@ -43,6 +43,7 @@ app.get('/', (req, res) => {
 
 app.post('/buy-number', async (req, res) => {
   const { areaCode, country, businessName, userId } = req.body;
+  console.log('BUY NUMBER REQUEST:', { areaCode, country, businessName, userId });
   try {
     let availableNumbers = [];
 
